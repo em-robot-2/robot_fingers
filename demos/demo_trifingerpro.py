@@ -51,6 +51,7 @@ def main():
                         help="""If set run only frontend with multi-process
                         robot data.  Otherwise run everything within a single
                         process.""")
+    parser.add_argument("--log", type=str)
     args = parser.parse_args()
 
     if args.multi_process:
@@ -65,6 +66,10 @@ def main():
         robot = robot_fingers.Robot(robot_interfaces.trifinger,
                                     robot_fingers.create_trifinger_backend,
                                     "trifingerpro.yml")
+        if args.log:
+            logger = robot_interfaces.trifinger.Logger(robot.robot_data, 100)
+            logger.start(args.log)
+
         robot.initialize()
         frontend = robot.frontend
 
