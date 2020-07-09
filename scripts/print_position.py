@@ -28,11 +28,6 @@ def main():
             robot_fingers.create_trifinger_backend,
             "trifingeredu.yml",
         ),
-        "fingerpro": (
-            robot_interfaces.finger,
-            robot_fingers.create_real_finger_backend,
-            "fingerpro_0.yml",
-        ),
         "trifingerpro": (
             robot_interfaces.trifinger,
             robot_fingers.create_trifinger_backend,
