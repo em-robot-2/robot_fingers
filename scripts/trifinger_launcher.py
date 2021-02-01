@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """TODO"""
+import enum
 import time
 import subprocess
 
@@ -8,6 +9,55 @@ import rclpy
 import rclpy.node
 from std_msgs.msg import String
 from std_srvs.srv import Empty
+
+
+class ProcessState(enum.Enum):
+    """Process state."""
+
+    #: Terminated cleanly (i.e. returncode == 0)
+    GOOD = 0
+
+    #: Terminated with error (returncode != 0)
+    BAD = 1
+
+    #: Still running
+    RUNNING = 2
+
+    #: Terminated (no matter which returncode)
+    GOOD_OR_BAD = 3
+
+
+class ProcessStateCompareWrapper:
+    """Wrapper around ProcessState to provide proper ``__eq__`` handling of GOOD_OR_BAD.
+
+    Wraps around the ProcessState enum and provides a custom ``__eq__`` where
+    ``GOOD == GOOD_OR_BAD`` and ``BAD == GOOD_OR_BAD`` evaluate to True.  This helps
+    to simplify the state machine in cases where it only matters that a process has
+    terminated, no matter if good or bad.
+    """
+
+    def __init__(self, state: ProcessState):
+        self.state = state
+
+    def __eq__(self, other):
+        if self.state == other.state:
+            return True
+        elif self.state == ProcessState.GOOD_OR_BAD and other.state in (
+            ProcessState.GOOD,
+            ProcessState.BAD,
+        ):
+            return True
+        elif other.state == ProcessState.GOOD_OR_BAD and self.state in (
+            ProcessState.GOOD,
+            ProcessState.BAD,
+        ):
+            return True
+        else:
+            return False
+
+    def __str__(self):
+        # hide the wrapper when converting to string
+        return str(self.state)
 
 
 class TrifingerLauncherNode(rclpy.node.Node):
@@ -100,171 +150,106 @@ class TrifingerLauncherNode(rclpy.node.Node):
         ]
         user_node = subprocess.Popen(cmd)
 
-        # monitor running nodes
+        # state constants to simplify the code below
+        RUNNING = ProcessStateCompareWrapper(ProcessState.RUNNING)
+        GOOD = ProcessStateCompareWrapper(ProcessState.GOOD)
+        BAD = ProcessStateCompareWrapper(ProcessState.BAD)
+        GOOD_OR_BAD = ProcessStateCompareWrapper(ProcessState.GOOD_OR_BAD)
+
+        # some helper functions
+        def get_state(poll_result):
+            if poll_result is None:
+                return RUNNING
+            elif poll_result == 0:
+                return GOOD
+            else:
+                return BAD
+
+        def shutdown_data():
+            self.get_logger().info("Shut down data node.")
+            self.data_shutdown.call_async(Empty.Request())
+
+        def shutdown_backend():
+            self.get_logger().info("Shut down robot backend node.")
+            self.backend_shutdown.call_async(Empty.Request())
+
+        def terminate_user():
+            self.get_logger().info("Kill user node.")
+            user_node.kill()
+
+        # monitor running nodes and handle shutdown using a state machine
         self.get_logger().info("Monitor nodes...")
+        error = False
+        previous_state = (RUNNING, RUNNING, RUNNING)
         while True:
             time.sleep(3)
 
-            if data_node.poll() is not None:
-                self.get_logger().info("Data node terminated.")
+            # update state
+            state = tuple(
+                get_state(x)
+                for x in (data_node.poll(), backend_node.poll(), user_node.poll())
+            )
 
-                # TODO better tear down?
-                self.backend_shutdown.call_async(Empty.Request())
-                user_node.kill()
+            # only take action if state changes
+            if state != previous_state:
+                print("State %s --> %s" % (previous_state, state))
+                previous_state = state
 
-                break
+                if state == (RUNNING, RUNNING, RUNNING):
+                    pass
 
-            if backend_node.poll() is not None:
-                self.get_logger().info("Backend node terminated.")
-                # FIXME this should actually first wait a bit and then
-                # terminate the user code before the data node is killed
-                time.sleep(5)
-                self.get_logger().info("Kill user node.")
-                user_node.kill()
-                self.get_logger().info("Shut down data node.")
-                self.data_shutdown.call_async(Empty.Request())
-                break
+                elif state == (RUNNING, RUNNING, GOOD_OR_BAD):
+                    shutdown_backend()
 
-            if user_node.poll() is not None:
-                self.get_logger().warning("User code terminated")
-                # call backend shutdown service
-                self.backend_shutdown.call_async(Empty.Request())
-                time.sleep(10)
-                self.data_shutdown.call_async(Empty.Request())
-                break
+                elif state == (RUNNING, GOOD, RUNNING):
+                    time.sleep(10)
+                    terminate_user()
 
-        self.get_logger().info("Done.")
+                elif state == (RUNNING, GOOD, GOOD_OR_BAD):
+                    shutdown_data()
 
+                elif state == (RUNNING, BAD, RUNNING):
+                    error = True
+                    time.sleep(10)
+                    terminate_user()
 
-def state_machine_draft():
-    import copy
-    import enum
+                elif state == (RUNNING, BAD, GOOD_OR_BAD):
+                    error = True
+                    shutdown_data()
 
-    # to avoid warnings
-    def shutdown_data():
-        pass
+                elif state == (GOOD_OR_BAD, RUNNING, RUNNING):
+                    error = True
+                    terminate_user()
 
-    def shutdown_backend():
-        pass
+                elif state == (GOOD_OR_BAD, RUNNING, GOOD_OR_BAD):
+                    error = True
+                    shutdown_backend()
 
-    def terminate_user():
-        pass
+                elif state == (GOOD_OR_BAD, GOOD_OR_BAD, RUNNING):
+                    error = True
+                    terminate_user()
 
-    class State(enum.Enum):
-        """Process state."""
+                # terminal states
 
-        #: Terminated cleanly (i.e. returncode == 0)
-        GOOD = 0
+                elif state == (GOOD, GOOD, GOOD_OR_BAD):
+                    # end with success :)
+                    break
 
-        #: Terminated with error (returncode != 0)
-        BAD = 1
+                elif state in (
+                    (BAD, GOOD, GOOD_OR_BAD),
+                    (GOOD_OR_BAD, BAD, GOOD_OR_BAD),
+                ):
+                    # end with failure
+                    error = True
+                    break
 
-        #: Still running
-        RUNNING = 2
+                else:
+                    raise RuntimeError("Unexpected state %s" % state)
 
-        #: Terminated (no matter which returncode)
-        GOOD_OR_BAD = 3
-
-    class ComparableState:
-        """Wrapper around State to provide proper ``__eq__`` handling of GOOD_OR_BAD.
-
-        Wraps around the State enum and provides a custom ``__eq__`` where
-        ``GOOD == GOOD_OR_BAD`` and ``BAD == GOOD_OR_BAD`` evaluate to True.  This helps
-        to simplify the state machine in cases where it only matters that a process has
-        terminated, no matter if good or bad.
-        """
-
-        def __init__(self, state: State):
-            self.state = state
-
-        def __eq__(self, other):
-            if self.state == other.state:
-                return True
-            elif self.state == State.GOOD_OR_BAD and other.state in (
-                State.GOOD,
-                State.BAD,
-            ):
-                return True
-            elif other.state == State.GOOD_OR_BAD and self.state in (
-                State.GOOD,
-                State.BAD,
-            ):
-                return True
-            else:
-                return False
-
-        def __str__(self):
-            # hide the wrapper when converting to string
-            return str(self.state)
-
-    RUNNING = ComparableState(State.RUNNING)
-    GOOD = ComparableState(State.GOOD)
-    BAD = ComparableState(State.BAD)
-    GOOD_OR_BAD = ComparableState(State.GOOD_OR_BAD)
-
-    # initially all processes are running
-    data_state = backend_state = user_state = RUNNING
-
-    error = False
-    last_state = None
-    while True:
-        time.sleep(3)
-        state = copy.copy((data_state, backend_state, user_state))
-
-        # only take action if state changes
-        if state != last_state:
-            print("State %s --> %s" % (last_state, state))
-            last_state = state
-
-            if state == (RUNNING, RUNNING, RUNNING):
-                pass
-
-            elif state == (RUNNING, RUNNING, GOOD_OR_BAD):
-                shutdown_backend()
-
-            elif state == (RUNNING, GOOD, RUNNING):
-                time.sleep(10)
-                terminate_user()
-
-            elif state == (RUNNING, GOOD, GOOD_OR_BAD):
-                shutdown_data()
-
-            elif state == (RUNNING, BAD, RUNNING):
-                error = True
-                time.sleep(10)
-                terminate_user()
-
-            elif state == (RUNNING, BAD, GOOD_OR_BAD):
-                error = True
-                shutdown_data()
-
-            elif state == (GOOD_OR_BAD, RUNNING, RUNNING):
-                error = True
-                terminate_user()
-
-            elif state == (GOOD_OR_BAD, RUNNING, GOOD_OR_BAD):
-                error = True
-                shutdown_backend()
-
-            elif state == (GOOD_OR_BAD, GOOD_OR_BAD, RUNNING):
-                error = True
-                terminate_user()
-
-            # terminal states
-
-            elif state == (GOOD, GOOD, GOOD_OR_BAD):
-                # end with success :)
-                break
-
-            elif state in ((BAD, GOOD, GOOD_OR_BAD), (GOOD_OR_BAD, BAD, GOOD_OR_BAD)):
-                # end with failure
-                error = True
-                break
-
-            else:
-                raise RuntimeError("Unexpected state %s" % state)
-
-    print(error)
+        if error:
+            self.get_logger().error("Finished with error.")
+        else:
+            self.get_logger().info("Done.")
 
 
 def main(args=None):
