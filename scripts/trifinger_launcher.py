@@ -60,6 +60,34 @@ class ProcessStateCompareWrapper:
         return str(self.state.name)
 
 
+class LauncherState:
+    """Represents the combined state of all nodes monitored by the launcher."""
+
+    def __init__(self, data_state, backend_state, user_state):
+        self.data_state = data_state
+        self.backend_state = backend_state
+        self.user_state = user_state
+
+    def __repr__(self):
+        return "(Data: {}, Robot: {}, User: {})".format(
+            self.data_state, self.backend_state, self.user_state
+        )
+
+    def __eq__(self, other):
+        # allow comparison with tuple by converting it
+        if type(other) is tuple:
+            try:
+                other = type(self)(*other)
+            except Exception:
+                return False
+
+        return (
+            (self.data_state == other.data_state)
+            and (self.backend_state == other.backend_state)
+            and (self.user_state == other.user_state)
+        )
+
+
 class TrifingerLauncherNode(rclpy.node.Node):
     """TODO"""
 
@@ -180,14 +208,15 @@ class TrifingerLauncherNode(rclpy.node.Node):
         # monitor running nodes and handle shutdown using a state machine
         self.get_logger().info("Monitor nodes...")
         error = False
-        previous_state = (RUNNING, RUNNING, RUNNING)
+        previous_state = LauncherState(RUNNING, RUNNING, RUNNING)
         while True:
             time.sleep(3)
 
             # update state
-            state = tuple(
-                get_state(x)
-                for x in (data_node.poll(), backend_node.poll(), user_node.poll())
+            state = LauncherState(
+                get_state(data_node.poll()),
+                get_state(backend_node.poll()),
+                get_state(user_node.poll()),
             )
 
             # only take action if state changes
