@@ -56,8 +56,8 @@ class ProcessStateCompareWrapper:
             return False
 
     def __repr__(self):
-        # hide the wrapper when converting to string
-        return str(self.state)
+        # only print the plain state name
+        return str(self.state.name)
 
 
 class TrifingerLauncherNode(rclpy.node.Node):
@@ -258,6 +258,8 @@ def main(args=None):
     node = TrifingerLauncherNode("trifinger_launcher")
     node.run()
 
+    # cleanup
+    node.destroy_node()
     rclpy.shutdown()
 
 
