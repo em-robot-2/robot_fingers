@@ -55,7 +55,7 @@ class ProcessStateCompareWrapper:
         else:
             return False
 
-    def __str__(self):
+    def __repr__(self):
         # hide the wrapper when converting to string
         return str(self.state)
 
@@ -192,7 +192,7 @@ class TrifingerLauncherNode(rclpy.node.Node):
 
             # only take action if state changes
             if state != previous_state:
-                print("State %s --> %s" % (previous_state, state))
+                self.get_logger().info("State %s --> %s" % (previous_state, state))
                 previous_state = state
 
                 if state == (RUNNING, RUNNING, RUNNING):
