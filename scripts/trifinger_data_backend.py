@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run TriFinger back-end using multi-process robot data."""
 import argparse
-import logging
 import sys
 
 # ROS imports
@@ -74,15 +73,10 @@ def main():
     )
     args = parser.parse_args()
 
-    log_handler = logging.StreamHandler(sys.stdout)
-    logging.basicConfig(
-        format="[TRIFINGER_DATA %(levelname)s %(asctime)s] %(message)s",
-        level=logging.DEBUG,
-        handlers=[log_handler],
-    )
-
     rclpy.init()
     node = TriFingerDataNode()
+
+    logger = node.get_logger()
 
     cameras_enabled = False
     if args.cameras:
@@ -93,7 +87,7 @@ def main():
         import trifinger_object_tracking.py_tricamera_types as tricamera
 
     if cameras_enabled:
-        logging.info("Start camera data")
+        logger.info("Start camera data")
 
         # make sure camera time series covers at least one second
         CAMERA_TIME_SERIES_LENGTH = 15
@@ -102,7 +96,7 @@ def main():
             "tricamera", True, CAMERA_TIME_SERIES_LENGTH
         )
 
-    logging.info("Start robot data")
+    logger.info("Start robot data")
 
     # Storage for all observations, actions, etc.
     history_size = args.max_number_of_actions + 1
@@ -124,10 +118,10 @@ def main():
         # 10% buffer
         log_size = int(camera_fps * episode_length_s * buffer_length_factor)
 
-        logging.info("Initialize camera logger with buffer size %d", log_size)
+        logger.info("Initialize camera logger with buffer size %d" % log_size)
         camera_logger = tricamera.Logger(camera_data, log_size)
 
-    logging.info("Data backend is ready")
+    logger.info("Data backend is ready")
 
     # send ready signal
     node.publish_status("READY")
@@ -135,22 +129,22 @@ def main():
     if cameras_enabled and args.camera_logfile:
         # FIXME backend.wait_until_first_action()
         camera_logger.start()
-        logging.info("Start camera logging")
+        logger.info("Start camera logging")
 
     while not node.shutdown_requested:
-        logging.debug("spin")  # TODO
+        logger.debug("spin")  # TODO
         rclpy.spin_once(node)
 
-    logging.debug("Received shutdown signal")
+    logger.debug("Received shutdown signal")
 
     if cameras_enabled and args.camera_logfile:
-        logging.info(
-            "Save recorded camera data to file %s", args.camera_logfile
+        logger.info(
+            "Save recorded camera data to file %s" % args.camera_logfile
         )
         camera_logger.stop_and_save(args.camera_logfile)
 
     if args.robot_logfile:
-        logging.info("Save robot data to file %s", args.robot_logfile)
+        logger.info("Save robot data to file %s" % args.robot_logfile)
         if args.max_number_of_actions:
             end_index = args.max_number_of_actions
         else:

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Run TriFinger back-end using multi-process robot data."""
 import argparse
-import logging
 import math
 import sys
 
@@ -72,15 +71,10 @@ def main():
     )
     args = parser.parse_args()
 
-    log_handler = logging.StreamHandler(sys.stdout)
-    logging.basicConfig(
-        format="[TRIFINGER_BACKEND %(levelname)s %(asctime)s] %(message)s",
-        level=logging.DEBUG,
-        handlers=[log_handler],
-    )
-
     rclpy.init()
     node = NotificationNode("trifinger_backend")
+
+    logger = node.get_logger()
 
     cameras_enabled = False
     if args.cameras:
@@ -95,15 +89,15 @@ def main():
         CameraDriver = tricamera.TriCameraObjectTrackerDriver
 
     if cameras_enabled:
-        logging.info("Start camera backend")
+        logger.info("Start camera backend")
 
         camera_data = tricamera.MultiProcessData("tricamera", False)
         camera_driver = CameraDriver("camera60", "camera180", "camera300")
         camera_backend = tricamera.Backend(camera_driver, camera_data)  # noqa
 
-        logging.info("Camera backend ready.")
+        logger.info("Camera backend ready.")
 
-    logging.info("Start robot backend")
+    logger.info("Start robot backend")
 
     # Use robot-dependent config file
     config_file_path = "/etc/trifingerpro/trifingerpro.yml"
@@ -125,7 +119,7 @@ def main():
     # Initializes the robot (e.g. performs homing).
     backend.initialize()
 
-    logging.info("Robot backend is ready")
+    logger.info("Robot backend is ready")
 
     # send ready signal
     node.publish_status("READY")
@@ -138,7 +132,7 @@ def main():
             break
 
     termination_reason = backend.get_termination_reason()
-    logging.debug("Backend termination reason: %d", termination_reason)
+    logger.debug("Backend termination reason: %d" % termination_reason)
 
     rclpy.shutdown()
     if termination_reason < 0:
