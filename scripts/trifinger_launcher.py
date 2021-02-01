@@ -20,12 +20,12 @@ class TrifingerLauncherNode(rclpy.node.Node):
         self.backend_node_ready = False
 
         self._shutdown_srv = self.create_service(
-            Empty, 'shutdown', self._shutdown_callback
+            Empty, "shutdown", self._shutdown_callback
         )
 
         self._sub_data_node_status = self.create_subscription(
             String,
-            '/trifinger_data/status',
+            "/trifinger_data/status",
             self._data_node_status_callback,
             10,
         )
@@ -33,16 +33,14 @@ class TrifingerLauncherNode(rclpy.node.Node):
 
         self._sub_backend_node_status = self.create_subscription(
             String,
-            '/trifinger_backend/status',
+            "/trifinger_backend/status",
             self._backend_node_status_callback,
             10,
         )
         self._sub_data_node_status  # prevent unused variable warning
 
-        self.data_shutdown = self.create_client(
-            Empty, '/trifinger_data/shutdown')
-        self.backend_shutdown = self.create_client(
-            Empty, '/trifinger_backend/shutdown')
+        self.data_shutdown = self.create_client(Empty, "/trifinger_data/shutdown")
+        self.backend_shutdown = self.create_client(Empty, "/trifinger_backend/shutdown")
 
     def _data_node_status_callback(self, msg):
         if msg.data == "READY":
@@ -136,6 +134,137 @@ class TrifingerLauncherNode(rclpy.node.Node):
                 break
 
         self.get_logger().info("Done.")
+
+
+def state_machine_draft():
+    import copy
+    import enum
+
+    # to avoid warnings
+    def shutdown_data():
+        pass
+
+    def shutdown_backend():
+        pass
+
+    def terminate_user():
+        pass
+
+    class State(enum.Enum):
+        """Process state."""
+
+        #: Terminated cleanly (i.e. returncode == 0)
+        GOOD = 0
+
+        #: Terminated with error (returncode != 0)
+        BAD = 1
+
+        #: Still running
+        RUNNING = 2
+
+        #: Terminated (no matter which returncode)
+        GOOD_OR_BAD = 3
+
+    class ComparableState:
+        """Wrapper around State to provide proper ``__eq__`` handling of GOOD_OR_BAD.
+
+        Wraps around the State enum and provides a custom ``__eq__`` where
+        ``GOOD == GOOD_OR_BAD`` and ``BAD == GOOD_OR_BAD`` evaluate to True.  This helps
+        to simplify the state machine in cases where it only matters that a process has
+        terminated, no matter if good or bad.
+        """
+
+        def __init__(self, state: State):
+            self.state = state
+
+        def __eq__(self, other):
+            if self.state == other.state:
+                return True
+            elif self.state == State.GOOD_OR_BAD and other.state in (
+                State.GOOD,
+                State.BAD,
+            ):
+                return True
+            elif other.state == State.GOOD_OR_BAD and self.state in (
+                State.GOOD,
+                State.BAD,
+            ):
+                return True
+            else:
+                return False
+
+        def __str__(self):
+            # hide the wrapper when converting to string
+            return str(self.state)
+
+    RUNNING = ComparableState(State.RUNNING)
+    GOOD = ComparableState(State.GOOD)
+    BAD = ComparableState(State.BAD)
+    GOOD_OR_BAD = ComparableState(State.GOOD_OR_BAD)
+
+    # initially all processes are running
+    data_state = backend_state = user_state = RUNNING
+
+    error = False
+    last_state = None
+    while True:
+        time.sleep(3)
+        state = copy.copy((data_state, backend_state, user_state))
+
+        # only take action if state changes
+        if state != last_state:
+            print("State %s --> %s" % (last_state, state))
+            last_state = state
+
+            if state == (RUNNING, RUNNING, RUNNING):
+                pass
+
+            elif state == (RUNNING, RUNNING, GOOD_OR_BAD):
+                shutdown_backend()
+
+            elif state == (RUNNING, GOOD, RUNNING):
+                time.sleep(10)
+                terminate_user()
+
+            elif state == (RUNNING, GOOD, GOOD_OR_BAD):
+                shutdown_data()
+
+            elif state == (RUNNING, BAD, RUNNING):
+                error = True
+                time.sleep(10)
+                terminate_user()
+
+            elif state == (RUNNING, BAD, GOOD_OR_BAD):
+                error = True
+                shutdown_data()
+
+            elif state == (GOOD_OR_BAD, RUNNING, RUNNING):
+                error = True
+                terminate_user()
+
+            elif state == (GOOD_OR_BAD, RUNNING, GOOD_OR_BAD):
+                error = True
+                shutdown_backend()
+
+            elif state == (GOOD_OR_BAD, GOOD_OR_BAD, RUNNING):
+                error = True
+                terminate_user()
+
+            # terminal states
+
+            elif state == (GOOD, GOOD, GOOD_OR_BAD):
+                # end with success :)
+                break
+
+            elif state in ((BAD, GOOD, GOOD_OR_BAD), (GOOD_OR_BAD, BAD, GOOD_OR_BAD)):
+                # end with failure
+                error = True
+                break
+
+            else:
+                raise RuntimeError("Unexpected state %s" % state)
+
+    print(error)
 
 
 def main(args=None):
