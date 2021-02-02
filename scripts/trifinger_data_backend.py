@@ -132,7 +132,7 @@ def main():
         logger.info("Start camera logging")
 
     while not node.shutdown_requested:
-        logger.debug("spin")  # TODO
+        logger.info("spin")  # TODO
         rclpy.spin_once(node)
 
     logger.debug("Received shutdown signal")
